@@ -2,14 +2,14 @@ import gym
 import random
 import numpy as np
 from replay_memory import ReplayMemory
-from q_network import Q_Network
+from q_network import QNetwork
 
 MAX_NUM_FRAMES = 1_000
 MAX_EPISODE_DURATION = 100  # number of frames
 
 def main():
     env = gym.make('CartPole-v1')
-    agent = Q_Network(env.observation_space, env.action_space)
+    agent = QNetwork(env.observation_space, env.action_space)
 
     frame = 0
     while frame < MAX_NUM_FRAMES:

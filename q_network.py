@@ -5,10 +5,10 @@ from tensorflow import keras
 from tensorflow.keras import layers
 
 CHECKPOINT_DIR = os.path.abspath("./ckpt")
-LOG_DIR = os.path.abspath("./log")
+LOG_DIR = os.path.abspath("./logs")
 
 
-class Q_Network:
+class QNetwork:
     def __init__(self, state_space, action_space):
         self.state_space = state_space
         self.action_space = action_space
@@ -33,15 +33,12 @@ class Q_Network:
         return self.get_compiled_model()
 
     def get_compiled_model(self):
-        model = keras.Sequential(
-            [
-                keras.Input(shape=self.state_space.shape),
-                layers.Dense(24, activation="relu"),
-                layers.Dense(24, activation="relu"),
-                layers.Dense(self.action_space.n),
-            ]
-        )
+        Lin = keras.Input(shape=self.state_space.shape)
+        L1 = layers.Dense(24, activation="relu")
+        L2 = layers.Dense(24, activation="relu")
+        Lout = layers.Dense(self.action_space.n)
 
+        model = keras.Sequential([Lin, L1, L2, Lout])
         model.compile('rmsprop', 'mse')
         return model
 
@@ -52,11 +49,10 @@ class Q_Network:
         state = np.expand_dims(state, axis=0)
         return np.argmax(self.model.predict(state), axis=-1)[0]
 
-    def training_step(self, x, y, batch_size, frame):
+    def training_step(self, x, y):
         loss = self.model.train_on_batch(x=x, y=y)
-
-        if frame % 500 == 0:
-            save_path = os.path.join(CHECKPOINT_DIR, f"ckpt-loss={loss:.4f}")
-            self.model.save(save_path)
-
         return loss
+
+    def save_model(self, filename):
+        save_path = os.path.join(CHECKPOINT_DIR, filename)
+        self.model.save(save_path)

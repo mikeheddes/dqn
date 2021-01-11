@@ -1,11 +1,11 @@
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-from q_network import Q_Network
-from replay_memory import ReplayMemory
-import numpy as np
-import random
 import gym
+import random
+import numpy as np
+from replay_memory import ReplayMemory
+from q_network import QNetwork
 
 
 MAX_NUM_FRAMES = 200_000
@@ -13,6 +13,7 @@ MAX_EPISODE_DURATION = 100  # number of frames
 BATCH_SIZE = 24
 REWARD_DISCOUNT = 0.9
 FRAMES_PER_PRINT = 100
+FRAMES_PER_SAVE = 500
 
 
 def take_random_action(frame):
@@ -21,19 +22,42 @@ def take_random_action(frame):
     return probability > random.random()
 
 
-def main():
-    env = gym.make('CartPole-v1')
-    replay_memory = ReplayMemory()
-    agent = Q_Network(env.observation_space, env.action_space)
-
+def make_training_transformer(state_shape, agent):
     # create variable before to minimize memory copies
-    state_batch_shape = (BATCH_SIZE, *env.observation_space.shape)
+    state_batch_shape = (BATCH_SIZE, *state_shape)
     state_batch = np.zeros(state_batch_shape, dtype=np.float32)
     action_batch = np.zeros((BATCH_SIZE,), dtype=np.int)
     reward_batch = np.zeros((BATCH_SIZE,), dtype=np.float32)
     next_state_batch = np.zeros(state_batch_shape, dtype=np.float32)
     done_batch = np.zeros((BATCH_SIZE,), dtype=np.bool)
     batch_range = np.arange(BATCH_SIZE, dtype=np.int)
+
+    def get_training_batch(experience_samples):
+        for i in range(BATCH_SIZE):
+            state, action, reward, next_state, done = experience_samples[i]
+            state_batch[i] = state
+            action_batch[i] = action
+            reward_batch[i] = reward
+            next_state_batch[i] = next_state
+            done_batch[i] = done
+
+        np.invert(done_batch, out=done_batch)
+        qs = agent.get_q_values(state_batch, BATCH_SIZE)
+        next_max_q = agent.get_q_values(next_state_batch, BATCH_SIZE).max(-1)
+        target_batch = reward_batch + REWARD_DISCOUNT * next_max_q * done_batch
+        qs[batch_range, action_batch] = target_batch
+
+        return state_batch, qs
+
+    return get_training_batch
+
+
+def main():
+    env = gym.make('CartPole-v1')
+    replay_memory = ReplayMemory()
+    agent = QNetwork(env.observation_space, env.action_space)
+    get_training_batch = make_training_transformer(
+        env.observation_space.shape, agent)
 
     frame = 0
     acc_loss = 0
@@ -49,33 +73,23 @@ def main():
             next_state, reward, done, info = env.step(action)
 
             if done:
-                # done doesn't return a negative reward...
+                # on done doesn't return a negative reward...
                 reward *= -1
 
             experience = (state, action, reward, next_state, done)
             replay_memory.append(experience)
             frame += 1
 
-            # learning
-            experience_batch = replay_memory.sample(BATCH_SIZE)
-            for i in range(BATCH_SIZE):
-                b_state, b_action, b_reward, b_next_state, b_done = experience_batch[i]
-                state_batch[i] = b_state
-                action_batch[i] = b_action
-                reward_batch[i] = b_reward
-                next_state_batch[i] = b_next_state
-                done_batch[i] = b_done
+            experience_samples = replay_memory.sample(BATCH_SIZE)
+            state_batch, qs_batch = get_training_batch(experience_samples)
+            acc_state_value += np.mean(qs_batch)
 
-            np.invert(done_batch, out=done_batch)
-            qs = agent.get_q_values(state_batch, BATCH_SIZE)
-            next_max_q = np.max(agent.get_q_values(
-                next_state_batch, BATCH_SIZE), axis=-1)
-            target_batch = reward_batch + REWARD_DISCOUNT * next_max_q * done_batch
-            qs[batch_range, action_batch] = target_batch
-            acc_state_value += np.mean(qs)
-
-            loss = agent.training_step(state_batch, qs, BATCH_SIZE, frame)
+            loss = agent.training_step(state_batch, qs_batch)
             acc_loss += loss
+
+            if frame % FRAMES_PER_SAVE == 0:
+                model_filename = f"ckpt-loss={loss:.4f}"
+                agent.save_model(model_filename)
 
             if frame % FRAMES_PER_PRINT == 0:
                 print(f"Frame: {frame}")
